@@ -1,17 +1,14 @@
 ---
-name: Feature request
+name: 새로운 기능 요청
 about: Suggest an idea for this project
-title: "[Enhancement]"
-labels: 'enhancement'
+title: "[Feature]"
+labels: 'feature'
 assignees: ''
 
 ---
 
 ## Kind
-- [ X ] Bug: 기존 기능의 버그수정을 요청합니다.
-- [ X ] Feature: 새로운 기능의 추가를 요청합니다.
-- [ O ] Enhancement: 기존 기능을 개선을 요청합니다.
-- [ X ] Document: 문서 수정을 요청합니다.
+- Feature: 새로운 기능의 추가를 요청합니다.
 
 ## Descriptions
 

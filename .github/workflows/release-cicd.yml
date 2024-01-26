@@ -1,0 +1,78 @@
+name: ci/cd-for-release
+
+on:
+  release:
+    types: [ published ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: zcp-sre
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Private Registry
+        uses: docker/login-action@v3
+        with:
+          registry: https://${{ vars.REGISTRY_HOSTNAME }}/${{ vars.REGISTRY_PROJECT }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: v2-zcr.cloudzcp.io/library/my-echo-go
+          tags: |
+            # type=ref,event=tag
+            type=semver,pattern={{version}}
+
+      - name: Build and push Docker images to Private Registry
+        id: push
+        uses: docker/build-push-action@v6
+        env:
+          GO_BUILD_VERSION: 1.23.1
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            go_base_version=${{ env.GO_BUILD_VERSION }}
+            build_version=${{ steps.meta.outputs.tags }}
+            build_commit=${{ github.sha }}
+
+#  deploy:
+#    runs-on: ubuntu-latest
+#    needs: build
+#    environment: zcp-ags-cp
+#    steps:
+#      - name: Install kubectl
+#        uses: azure/setup-kubectl@v4
+#        # with:
+#        #   version: '1.28.3' # default is latest stable
+#
+#      - name: Set image to patch for deployment
+#        run: |
+#          # Configure kubectl with Kubeconfig
+#          mkdir -p $HOME/.kube
+#
+#          # for dev environment
+#          # echo "${{ secrets.DEV_KUBE_CONFIG }}" > $HOME/.kube/config
+#          # kubectl config set-context --current --namespace=${{ env.NAMESPACE }}
+#
+#          # set image
+#          # kubectl set image deployment/${{ env.DEPLOYMENT }} ${{ env.CONTAINER }}=${{ env.REPOSIOTRY }}:${{ env.DOCKER_METADATA_OUTPUT_VERSION }}
+#
+#          # for ags environment
+#          echo "${{ secrets.AGS_KUBE_CONFIG }}" > $HOME/.kube/config
+#          kubectl config set-context --current --namespace=${{ env.NAMESPACE }}
+#
+#          # set image
+#          kubectl set image deployment/${{ env.DEPLOYMENT }} ${{ env.CONTAINER }}=${{ env.REPOSIOTRY }}:${{ env.DOCKER_METADATA_OUTPUT_VERSION }}
