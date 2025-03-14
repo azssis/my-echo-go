@@ -20,6 +20,7 @@ type Option struct {
 	Pretty         bool   // whether to pretty print json
 	Format         string // json or text
 	DetailedHeader bool   // whether to show detailed header information
+	ShowBody       bool   // whether to show response body in log
 }
 
 // responseWriter는 응답을 캡처하기 위한 http.ResponseWriter의 래퍼입니다.
@@ -56,6 +57,7 @@ func init() {
 		Pretty:         false,
 		Format:         "TEXT",
 		DetailedHeader: false,
+		ShowBody:       false,
 	}
 	var err error
 	hostname, err = os.Hostname()
@@ -72,17 +74,21 @@ func InitOption() {
 		option.Quiet = false
 		option.Size = DefaultLen
 		option.DetailedHeader = false
+		option.ShowBody = false
 	case "DEBUG":
 		option.Quiet = false
 		option.Size = DefaultLen * 10
 		option.DetailedHeader = true
+		option.ShowBody = true
 	case "TRACE":
 		option.Quiet = false
 		option.Size = MaxLen
 		option.DetailedHeader = true
+		option.ShowBody = true
 	default:
 		option.Quiet = true
 		option.Size = DefaultLen
+		option.ShowBody = false
 	}
 
 	if os.Getenv("LOG_PRETTY") != "" {
@@ -94,8 +100,43 @@ func InitOption() {
 	if os.Getenv("LOG_FORMAT") != "" {
 		option.Format = strings.ToUpper(os.Getenv("LOG_FORMAT"))
 	}
+	if os.Getenv("LOG_SHOW_BODY") != "" {
+		option.ShowBody = util.StringToBool(os.Getenv("LOG_SHOW_BODY"))
+	}
 
-	log.Printf("Logging Middleware initialized with options: %+v, Hostname: %s", option, hostname)
+	// 최종 적용된 옵션을 구조화하여 출력
+	var logLevel string
+	switch {
+	case option.Quiet:
+		logLevel = "FATAL/ERROR/WARN"
+	case option.Size == DefaultLen:
+		logLevel = "INFO"
+	case option.Size == DefaultLen*10:
+		logLevel = "DEBUG"
+	case option.Size == MaxLen:
+		logLevel = "TRACE"
+	default:
+		logLevel = "UNKNOWN"
+	}
+
+	log.Printf(`
+┌ Logging Options
+│ Level          : %s
+│ Format         : %s
+│ Max Size       : %d bytes
+│ Pretty Print   : %t
+│ Show Headers   : %t
+│ Show Body      : %t
+│ Host          : %s
+└──────────────`,
+		logLevel,
+		option.Format,
+		option.Size,
+		option.Pretty,
+		option.DetailedHeader,
+		option.ShowBody,
+		hostname,
+	)
 }
 
 // formatLogMessage는 로그 메시지를 지정된 형식으로 포맷팅합니다.
@@ -104,9 +145,9 @@ func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duratio
 
 	// 기본 메타데이터
 	baseMetadata := map[string]interface{}{
-		"timestamp": time.Now().Format(time.StampMicro),
-		"duration":  duration.String(),
-		"status":    rw.statusCode,
+		"timestamp": time.Now().Format("2006-01-02 15:04:05.000000"),
+		"duration":  fmt.Sprintf("%.3fms", float64(duration.Microseconds())/1000.0),
+		"status":    fmt.Sprintf("%d %s", rw.statusCode, http.StatusText(rw.statusCode)),
 		"method":    r.Method,
 		"uri":       r.RequestURI,
 		"host":      r.Host,
@@ -115,27 +156,35 @@ func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duratio
 	if option.DetailedHeader {
 		// DetailedHeader가 true일 때는 기본 메타데이터를 그대로 사용
 		logData = baseMetadata
-		// 추가 헤더 정보
-		logData["remote_addr"] = r.RemoteAddr
-		logData["proto"] = r.Proto
-		logData["user_agent"] = r.UserAgent()
-		logData["content_length"] = r.ContentLength
+		// 추가 헤더 정보를 구조화하여 저장
+		headers := make(map[string]interface{})
+		headers["remote_addr"] = r.RemoteAddr
+		headers["proto"] = r.Proto
+		headers["user_agent"] = r.UserAgent()
+		headers["content_length"] = r.ContentLength
 		if len(r.TransferEncoding) > 0 {
-			logData["transfer_encoding"] = r.TransferEncoding
+			headers["transfer_encoding"] = r.TransferEncoding
 		}
+		logData["headers"] = headers
 	} else {
 		// DetailedHeader가 false일 때는 메타데이터를 한 줄로 직렬화
 		metadataBytes, _ := json.Marshal(baseMetadata)
 		logData["meta"] = json.RawMessage(metadataBytes)
 	}
 
-	// 응답 본문이 있고 quiet 모드가 아닌 경우 별도 필드로 추가
-	if !option.Quiet && rw.body.Len() > 0 {
+	// 응답 본문이 있고 quiet 모드가 아니고 ShowBody가 true인 경우 별도 필드로 추가
+	if !option.Quiet && option.ShowBody && rw.body.Len() > 0 {
 		respBody := rw.body.String()
 		if len(respBody) > int(option.Size) {
 			respBody = respBody[:option.Size] + "..."
 		}
-		logData["body"] = respBody
+		// 응답이 JSON 형식인 경우 구조화하여 저장
+		var bodyData interface{}
+		if err := json.Unmarshal([]byte(respBody), &bodyData); err == nil {
+			logData["body"] = bodyData
+		} else {
+			logData["body"] = respBody
+		}
 	}
 
 	var result string
@@ -144,7 +193,7 @@ func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duratio
 	switch option.Format {
 	case "JSON":
 		if option.Pretty {
-			jsonBytes, err := json.MarshalIndent(logData, "", "  ")
+			jsonBytes, err := json.MarshalIndent(logData, "", "    ")
 			if err == nil {
 				return string(jsonBytes)
 			}
@@ -161,21 +210,46 @@ func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duratio
 	default: // TEXT
 		var builder strings.Builder
 		if !option.DetailedHeader {
-			// 메타데이터를 한 줄로 표시
-			metaStr, _ := json.Marshal(baseMetadata)
-			builder.WriteString(fmt.Sprintf("meta=%s", string(metaStr)))
+			// 메타데이터를 구조화된 형식으로 표시
+			builder.WriteString("┌ Request Info\n")
+			metaData := logData["meta"].(json.RawMessage)
+			var meta map[string]interface{}
+			json.Unmarshal(metaData, &meta)
+			for k, v := range meta {
+				builder.WriteString(fmt.Sprintf("│ %-12s: %v\n", k, v))
+			}
+			builder.WriteString("└──────────────\n")
 		} else {
-			// 상세 정보를 key=value 형식으로 표시
+			// 상세 정보를 구조화된 형식으로 표시
+			builder.WriteString("┌ Request Info\n")
 			for k, v := range logData {
-				if k != "body" {
-					builder.WriteString(fmt.Sprintf("%s=%v ", k, v))
+				if k != "headers" && k != "body" {
+					builder.WriteString(fmt.Sprintf("│ %-12s: %v\n", k, v))
 				}
 			}
+			builder.WriteString("├ Headers\n")
+			headers := logData["headers"].(map[string]interface{})
+			for k, v := range headers {
+				builder.WriteString(fmt.Sprintf("│ %-12s: %v\n", k, v))
+			}
+			builder.WriteString("└──────────────\n")
 		}
+
+		// 응답 본문이 있는 경우 추가
 		if body, ok := logData["body"]; ok {
-			builder.WriteString(fmt.Sprintf("\nbody=%v", body))
+			builder.WriteString("┌ Response Body\n")
+			switch v := body.(type) {
+			case map[string]interface{}, []interface{}:
+				// JSON 데이터인 경우 들여쓰기 적용
+				prettyJSON, _ := json.MarshalIndent(v, "│ ", "  ")
+				builder.WriteString(fmt.Sprintf("│ %s\n", string(prettyJSON)))
+			default:
+				// 일반 텍스트인 경우
+				builder.WriteString(fmt.Sprintf("│ %v\n", body))
+			}
+			builder.WriteString("└──────────────")
 		}
-		result = strings.TrimSpace(builder.String())
+		result = builder.String()
 	}
 
 	if err != nil {

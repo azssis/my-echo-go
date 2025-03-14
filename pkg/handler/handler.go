@@ -77,15 +77,71 @@ func InitOption() {
 	setOptionFields(level)
 
 	// Parse common environment variables
-	if util.StringToBool(os.Getenv(EnvEchoJson)) {
+	if os.Getenv(EnvEchoJson) != "" && util.StringToBool(os.Getenv(EnvEchoJson)) {
 		option.Format = FormatJSON
 	}
-	option.Pretty = util.StringToBool(os.Getenv(EnvEchoPretty))
-	option.ShowHeader = util.StringToBool(os.Getenv(EnvEchoHeader))
-	option.ShowBody = util.StringToBool(os.Getenv(EnvEchoBody))
-	option.SimpleHeader = util.StringToBool(os.Getenv(EnvEchoSimpleHeader))
 
-	log.Printf("Initializing options: %+v", option)
+	if os.Getenv(EnvEchoPretty) != "" {
+		option.Pretty = util.StringToBool(os.Getenv(EnvEchoPretty))
+	}
+
+	if os.Getenv(EnvEchoHeader) != "" {
+		option.ShowHeader = util.StringToBool(os.Getenv(EnvEchoHeader))
+	}
+
+	if os.Getenv(EnvEchoBody) != "" {
+		option.ShowBody = util.StringToBool(os.Getenv(EnvEchoBody))
+	}
+
+	if os.Getenv(EnvEchoSimpleHeader) != "" {
+		option.SimpleHeader = util.StringToBool(os.Getenv(EnvEchoSimpleHeader))
+	}
+
+	// 최종 적용된 옵션을 구조화하여 출력
+	var logLevel string
+	switch {
+	case option.Quiet:
+		logLevel = "FATAL/ERROR/WARN"
+	case option.Size == DefaultLen:
+		logLevel = "INFO"
+	case option.Size == DefaultLen*100:
+		logLevel = "DEBUG"
+	case option.Size == MaxLen:
+		logLevel = "TRACE"
+	default:
+		logLevel = "UNKNOWN"
+	}
+
+	var formatStr string
+	switch option.Format {
+	case FormatJSON:
+		formatStr = "JSON"
+	case FormatYAML:
+		formatStr = "YAML"
+	default:
+		formatStr = "TEXT"
+	}
+
+	log.Printf(`
+┌ Echo Handler Options
+│ Level          : %s
+│ Format         : %s
+│ Max Size       : %d bytes
+│ Pretty Print   : %t
+│ Show Header    : %t
+│ Show Body      : %t
+│ Simple Header  : %t
+│ Host          : %s
+└──────────────`,
+		logLevel,
+		formatStr,
+		option.Size,
+		option.Pretty,
+		option.ShowHeader,
+		option.ShowBody,
+		option.SimpleHeader,
+		hostname,
+	)
 }
 
 func setOptionFields(level string) {
