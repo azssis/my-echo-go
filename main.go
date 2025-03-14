@@ -4,6 +4,7 @@ import (
 	"log"
 	"my-echo-go/pkg/handler"
 	"my-echo-go/pkg/middleware"
+	"my-echo-go/pkg/option"
 	"net/http"
 	"os"
 )
@@ -21,8 +22,8 @@ func main() {
 		port = "8080"
 	}
 
-	handler.InitOption()
-	middleware.InitOption()
+	// 옵션 초기화
+	option.InitOption()
 
 	mux := http.NewServeMux()
 	mux.Handle("/", middleware.LoggingMiddleware(http.HandlerFunc(handler.Echo)))

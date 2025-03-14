@@ -59,7 +59,7 @@ run: build
 # 개발 모드로 실행 (상세 헤더 정보 표시)
 run-dev: build
 	@echo "Running $(APP_NAME) in development mode..."
-	@LOG_LEVEL=TRACE ECHO_LEVEL=TRACE ECHO_DETAILED_HEADER=true ECHO_PRETTY=true ./$(BUILD_DIR)/$(APP_NAME)
+	@LEVEL=DEBUG ./$(BUILD_DIR)/$(APP_NAME)
 
 image:
 	@echo "Building docker image... (Version: $(VERSION), Git: $(GIT_COMMIT), GoVersion: $(GO_VERSION))"
