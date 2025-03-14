@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"my-echo-go/pkg/util"
 	"net/http"
 	"os"
 	"strings"
@@ -69,20 +70,22 @@ const (
 )
 
 func InitOption() {
-	// Parse common environment variables
-	if StringToBool(os.Getenv(EnvEchoJson)) {
-		option.Format = FormatJSON
-	}
-	option.Pretty = StringToBool(os.Getenv(EnvEchoPretty))
-	option.ShowHeader = StringToBool(os.Getenv(EnvEchoHeader))
-	option.ShowBody = StringToBool(os.Getenv(EnvEchoBody))
-	option.SimpleHeader = StringToBool(os.Getenv(EnvEchoSimpleHeader))
-
 	// Normalize log level to uppercase and handle defaults
 	level := strings.ToUpper(os.Getenv(EnvEchoLevel))
 
 	// Set option fields based on log level
 	setOptionFields(level)
+
+	// Parse common environment variables
+	if util.StringToBool(os.Getenv(EnvEchoJson)) {
+		option.Format = FormatJSON
+	}
+	option.Pretty = util.StringToBool(os.Getenv(EnvEchoPretty))
+	option.ShowHeader = util.StringToBool(os.Getenv(EnvEchoHeader))
+	option.ShowBody = util.StringToBool(os.Getenv(EnvEchoBody))
+	option.SimpleHeader = util.StringToBool(os.Getenv(EnvEchoSimpleHeader))
+
+	log.Printf("Initializing options: %+v", option)
 }
 
 func setOptionFields(level string) {
@@ -319,15 +322,4 @@ func TrimmedOutput(v interface{}, format OutputFormat, maxSize int64, pretty boo
 	}
 
 	return serialized, nil
-}
-
-func StringToBool(str string) bool {
-	switch strings.ToLower(str) {
-	case "true", "1", "yes":
-		return true
-	case "false", "0", "no", "":
-		return false
-	default:
-		return false
-	}
 }

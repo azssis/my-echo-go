@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"my-echo-go/pkg/util"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Option struct {
@@ -61,43 +64,46 @@ func init() {
 	}
 }
 
-// StringToBool converts a string to a boolean value
-func StringToBool(str string) bool {
-	switch strings.ToLower(str) {
-	case "true", "1", "yes":
-		return true
-	case "false", "0", "no", "":
-		return false
-	default:
-		return false
-	}
-}
-
 func InitOption() {
-	option.Pretty = StringToBool(os.Getenv("LOG_PRETTY"))
-	option.DetailedHeader = StringToBool(os.Getenv("LOG_DETAILED_HEADER"))
-
 	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
 	case "FATAL", "ERROR", "WARN":
 		// 기본값 유지
 	case "INFO":
 		option.Quiet = false
 		option.Size = DefaultLen
+		option.DetailedHeader = false
 	case "DEBUG":
 		option.Quiet = false
 		option.Size = DefaultLen * 10
+		option.DetailedHeader = true
 	case "TRACE":
 		option.Quiet = false
 		option.Size = MaxLen
+		option.DetailedHeader = true
 	default:
 		option.Quiet = true
 		option.Size = DefaultLen
 	}
+
+	if os.Getenv("LOG_PRETTY") != "" {
+		option.Pretty = util.StringToBool(os.Getenv("LOG_PRETTY"))
+	}
+	if os.Getenv("LOG_DETAILED_HEADER") != "" {
+		option.DetailedHeader = util.StringToBool(os.Getenv("LOG_DETAILED_HEADER"))
+	}
+	if os.Getenv("LOG_FORMAT") != "" {
+		option.Format = strings.ToUpper(os.Getenv("LOG_FORMAT"))
+	}
+
+	log.Printf("Logging Middleware initialized with options: %+v, Hostname: %s", option, hostname)
 }
 
-// formatLogMessage는 로그 메시지를 JSON 또는 텍스트 형식으로 포맷팅합니다.
+// formatLogMessage는 로그 메시지를 지정된 형식으로 포맷팅합니다.
 func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duration) string {
-	logData := map[string]interface{}{
+	logData := make(map[string]interface{})
+
+	// 기본 메타데이터
+	baseMetadata := map[string]interface{}{
 		"timestamp": time.Now().Format(time.StampMicro),
 		"duration":  duration.String(),
 		"status":    rw.statusCode,
@@ -107,6 +113,9 @@ func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duratio
 	}
 
 	if option.DetailedHeader {
+		// DetailedHeader가 true일 때는 기본 메타데이터를 그대로 사용
+		logData = baseMetadata
+		// 추가 헤더 정보
 		logData["remote_addr"] = r.RemoteAddr
 		logData["proto"] = r.Proto
 		logData["user_agent"] = r.UserAgent()
@@ -114,30 +123,65 @@ func formatLogMessage(r *http.Request, rw *responseWriter, duration time.Duratio
 		if len(r.TransferEncoding) > 0 {
 			logData["transfer_encoding"] = r.TransferEncoding
 		}
+	} else {
+		// DetailedHeader가 false일 때는 메타데이터를 한 줄로 직렬화
+		metadataBytes, _ := json.Marshal(baseMetadata)
+		logData["meta"] = json.RawMessage(metadataBytes)
 	}
 
-	if !option.Quiet {
-		if rw.body.Len() > 0 {
-			respBody := rw.body.String()
-			if len(respBody) > int(option.Size) {
-				respBody = respBody[:option.Size] + "..."
+	// 응답 본문이 있고 quiet 모드가 아닌 경우 별도 필드로 추가
+	if !option.Quiet && rw.body.Len() > 0 {
+		respBody := rw.body.String()
+		if len(respBody) > int(option.Size) {
+			respBody = respBody[:option.Size] + "..."
+		}
+		logData["body"] = respBody
+	}
+
+	var result string
+	var err error
+
+	switch option.Format {
+	case "JSON":
+		if option.Pretty {
+			jsonBytes, err := json.MarshalIndent(logData, "", "  ")
+			if err == nil {
+				return string(jsonBytes)
 			}
-			logData["response"] = respBody
 		}
-	}
-
-	if option.Pretty {
-		jsonBytes, err := json.MarshalIndent(logData, "", "  ")
+		jsonBytes, err := json.Marshal(logData)
 		if err == nil {
-			return string(jsonBytes)
+			result = string(jsonBytes)
 		}
+	case "YAML":
+		yamlBytes, err := yaml.Marshal(logData)
+		if err == nil {
+			result = string(yamlBytes)
+		}
+	default: // TEXT
+		var builder strings.Builder
+		if !option.DetailedHeader {
+			// 메타데이터를 한 줄로 표시
+			metaStr, _ := json.Marshal(baseMetadata)
+			builder.WriteString(fmt.Sprintf("meta=%s", string(metaStr)))
+		} else {
+			// 상세 정보를 key=value 형식으로 표시
+			for k, v := range logData {
+				if k != "body" {
+					builder.WriteString(fmt.Sprintf("%s=%v ", k, v))
+				}
+			}
+		}
+		if body, ok := logData["body"]; ok {
+			builder.WriteString(fmt.Sprintf("\nbody=%v", body))
+		}
+		result = strings.TrimSpace(builder.String())
 	}
 
-	jsonBytes, err := json.Marshal(logData)
 	if err != nil {
 		return fmt.Sprintf("Error formatting log message: %v", err)
 	}
-	return string(jsonBytes)
+	return result
 }
 
 func LoggingMiddleware(next http.Handler) http.Handler {
